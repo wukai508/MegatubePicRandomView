@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片画廊</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-gap: 15px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .gallery-item {
+            position: relative;
+            overflow: hidden;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            aspect-ratio: 1 / 1;
+            transition: transform 0.3s ease;
+        }
+        
+        .gallery-item:hover {
+            transform: scale(1.03);
+        }
+        
+        .gallery-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            transition: transform 0.3s ease;
+        }
+        
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .enlarged-img {
+            max-width: 80%;
+            max-height: 80%;
+            object-fit: contain;
+            transform: scale(0.5);
+            transition: transform 0.3s ease;
+        }
+        
+        .overlay.active .enlarged-img {
+            transform: scale(1);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            font-size: 18px;
+            color: #666;
+            display: none;
+        }
+
+        /* 新增刷新按钮样式 */
+        .refresh-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            z-index: 1001;
+            font-size: 16px;
+        }
+        .refresh-btn:hover {
+            background-color: #45a049;
+        }
+        .refresh-btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        /* 添加进度条样式 */
+        .progress-container {
+            width: 80%;
+            max-width: 600px;
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 10px;
+            margin: 0 auto 30px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0;
+            background-color: #4CAF50;
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            line-height: 20px;
+            color: #333;
+            font-size: 12px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <!-- 新增的刷新按钮 -->
+    <button id="refreshBtn" class="refresh-btn">刷新图片</button>
+    <h1 style="text-align: center; margin-bottom: 10px;">图片画廊</h1>
+    <div class="progress-container">
+        <div class="progress-bar" id="progressBar"></div>
+        <div class="progress-text" id="progressText">准备中...</div>
+    </div>
+    
+    <div id="loading" class="loading">正在加载图片...</div>
+    
+    <div class="gallery" id="gallery">
+        <!-- 图片将通过JavaScript动态加载 -->
+    </div>
+    
+    <div class="overlay" id="overlay">
+        <img class="enlarged-img" id="enlargedImg" src="" alt="放大图片">
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const refreshBtn = document.getElementById('refreshBtn');
+            const gallery = document.getElementById('gallery');
+            const overlay = document.getElementById('overlay');
+            const enlargedImg = document.getElementById('enlargedImg');
+            const loading = document.getElementById('loading');
+
+            // 在脚本开头添加进度状态变量
+            let progressInterval;
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+
+            // 更新进度条的函数
+            function updateProgress(progress, message) {
+                progressBar.style.width = `${progress}%`;
+                progressText.textContent = message;
+            }
+
+            // 加载并删除已显示的图片
+            async function loadAndRemoveImages() {
+                loading.style.display = 'block';
+                loading.textContent = '正在加载图片...';
+                
+                try {
+                    // 1. 获取当前图片列表
+                    const response = await fetch('pic.txt');
+                    const data = await response.text();
+                    let allLines = data.split('\n').filter(link => link.trim() !== '');
+                    
+                    if (allLines.length === 0) {
+                        throw new Error('没有可用的图片');
+                    }
+                    
+                    // 2. 提取前12行
+                    const imagesToShow = allLines.slice(0, 12);
+                    const remainingLines = allLines.slice(12);
+                    
+                    // 3. 立即更新文件（删除已显示的图片）
+                    await fetch('/update-pic-txt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ remainingLines: remainingLines })
+                    });
+                    
+                    // 4. 显示图片
+                    updateGallery(imagesToShow);
+                    loading.style.display = 'none';
+                    
+                    return imagesToShow.length; // 返回显示的图片数量
+                    
+                } catch (error) {
+                    console.error('加载图片失败:', error);
+                    loading.textContent = '加载失败: ' + error.message;
+                    throw error;
+                }
+            }
+
+            // 运行 megatube.py 的独立函数
+            async function runMegatube() {
+                try {
+                    // 清除之前的进度
+                    clearInterval(progressInterval);
+                    updateProgress(0, '正在启动脚本...');
+                    
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => {
+                        controller.abort();
+                        updateProgress(0, '请求超时，请稍后重试...');
+                    }, 60000);
+
+                    // 更平滑的进度模拟
+                    let progress = 0;
+                    progressInterval = setInterval(() => {
+                        progress = Math.min(progress + 2, 90); // 调整为每次+2%，更平滑
+                        updateProgress(progress, `运行中 ${progress}%`);
+                    }, 300); // 调整为300ms更新一次
+
+                    // 实际执行脚本
+                    const response = await fetch('http://localhost:5000/run-megatube', {
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    clearInterval(progressInterval);
+
+                    if (!response.ok) throw new Error(`HTTP错误 ${response.status}`);
+                    
+                    const result = await response.json();
+                    if (result.status !== 'success') throw new Error(result.message);
+
+                    // 完成时显示100%
+                    updateProgress(100, '完成！');
+                    setTimeout(() => updateProgress(0, ''), 2000);
+                    
+                    return true; // 返回成功状态
+                    
+                } catch (error) {
+                    clearInterval(progressInterval);
+                    updateProgress(0, `错误: ${error.message}`);
+                    console.error('运行脚本失败:', error);
+                    throw error; // 继续抛出错误
+                }
+            }
+
+            // 初始化流程
+            async function initialize() {
+                try {
+                    // 1. 先尝试加载现有图片
+                    let displayedCount = 0;
+                    try {
+                        displayedCount = await loadAndRemoveImages();
+                    } catch (e) {
+                        console.log('首次运行，无现有图片');
+                    }
+                    
+                    // 2. 无论如何都运行一次脚本
+                    loading.textContent = '正在初始化图片库...';
+                    await runMegatube();
+                    
+                    // 3. 仅在需要时加载新图片（例如图片不足12张）
+                    if (displayedCount < 12) {
+                        await loadAndRemoveImages();
+                    }
+                    
+                } catch (error) {
+                    console.error('初始化失败:', error);
+                    loading.innerHTML = `初始化失败: ${error.message}<br>
+                                        <button onclick="initialize()">点击重试</button>`;
+                }
+            }
+
+            // 启动初始化
+            initialize();
+
+            // 刷新按钮逻辑
+            refreshBtn.addEventListener('click', async function() {
+                refreshBtn.disabled = true;
+                loading.style.display = 'block';
+                loading.textContent = '正在更新图片...';
+                
+                try {
+                    // 1. 先加载并显示现有图片
+                    await loadAndRemoveImages();
+                    
+                    // 2. 运行脚本补充新图片
+                    await runMegatube();
+                    
+                    loading.textContent = '更新完成！';
+                    
+                } catch (error) {
+                    console.error('刷新错误:', error);
+                    loading.textContent = `刷新失败: ${error.message}`;
+                } finally {
+                    refreshBtn.disabled = false;
+                }
+            });
+
+            // 独立画廊更新函数
+            function updateGallery(imageLinks) {
+                const gallery = document.getElementById('gallery');
+                gallery.innerHTML = '';
+                
+                imageLinks.forEach((link, index) => {
+                    const img = new Image();
+                    img.onload = function() {
+                        const galleryItem = document.createElement('div');
+                        galleryItem.className = 'gallery-item';
+                        img.alt = `图片 ${index + 1}`;
+                        img.addEventListener('click', () => enlargeImage(img));
+                        galleryItem.appendChild(img);
+                        gallery.appendChild(galleryItem);
+                    };
+                    img.onerror = () => console.warn(`图片加载失败: ${link}`);
+                    img.src = link;
+                });
+            }
+            
+            // 放大图片函数
+            function enlargeImage(imgElement) {
+                enlargedImg.src = imgElement.src;
+                overlay.classList.add('active');
+            }
+            
+            // 点击遮罩或图片关闭放大
+            overlay.addEventListener('click', function(e) {
+                if (e.target === overlay || e.target === enlargedImg) {
+                    overlay.classList.remove('active');
+                }
+            });
+            
+            // 按ESC键关闭放大
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && overlay.classList.contains('active')) {
+                    overlay.classList.remove('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
